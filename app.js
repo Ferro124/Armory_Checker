@@ -107,15 +107,32 @@ app.get("/healthcheck", (req, res) => {
   res.sendStatus(200); // OK
 });
 
+//-----------------------------------------
+//function to restart
+let attemptCount = 0;
+const maxAttempts = 3;
+
+function tryRestartBot() {
+  if (attemptCount < maxAttempts) {
+    console.log(`Attempt ${attemptCount + 1}: Attempting to restart bot...`);
+    attemptCount++;
+    startBot(); // Call the bot start function
+    setTimeout(tryRestartBot, 5000); // Schedule next attempt after 5 seconds
+  } else {
+    console.log("Max restart attempts reached. Stopping.");
+  }
+}
+
+//-----------------------------------------
+
 // Handle Discord errors and reconnects
 client.on("error", (error) => {
   console.error("Client error:", error);
   //Restart the bot after a delay to avoid rapid looping
   client.destroy();
-  setTimeout(() => {
-    console.log("Attempting to restart bot...");
-    startBot();
-  }, 5000); // 5-second delay before restart
+  console.log("DISCORD ERROR:Attempting to restart bot...");
+  attemptCount = 0;
+  tryRestartBot();
 });
 
 client.on("shardDisconnect", (event, id) => {
@@ -124,30 +141,23 @@ client.on("shardDisconnect", (event, id) => {
   );
   //Restart the bot after a delay to avoid rapid looping
   client.destroy();
-  setTimeout(() => {
-    console.log("Attempting to restart bot...");
-    startBot();
-  }, 5000); // 5-second delay before restart
+  console.log("Attempting to restart bot...");
+  attemptCount = 0;
+  tryRestartBot();
 });
 
 client.on("shardReconnecting", (id) => {
   console.log(`Shard ${id} is reconnecting...`);
-//Restart the bot after a delay to avoid rapid looping
-client.destroy();
-setTimeout(() => {
-  console.log("Attempting to restart bot...");
-  startBot();
-}, 5000); // 5-second delay before restart
+  //Restart the bot after a delay to avoid rapid looping
+  client.destroy();
+  attemptCount = 0;
+  tryRestartBot();
 });
 
 client.on("shardResume", (id, replayedEvents) => {
   console.log(`Shard ${id} resumed. Replayed ${replayedEvents} events.`);
-    //Restart the bot after a delay to avoid rapid looping
-    client.destroy();
-    setTimeout(() => {
-      console.log("Attempting to restart bot...");
-      startBot();
-    }, 5000); // 5-second delay before restart
+  //Restart the bot after a delay to avoid rapid looping
+  client.destroy();
 });
 
 // Graceful shutdown handling
@@ -158,15 +168,16 @@ process.on("SIGINT", () => {
 });
 
 // Unhandled promise rejection handling
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("Unhandled Rejection at:", promise, "reason:", reason);
-  //Restart the bot after a delay to avoid rapid looping
-  client.destroy();
-  setTimeout(() => {
-    console.log("Attempting to restart bot...");
-    startBot();
-  }, 5000); // 5-second delay before restart
-});
+process.on(
+  "unhandledRejection",
+  (reason, promise) => {
+    console.error("Unhandled Rejection at:", promise, "reason:", reason);
+    //Restart the bot after a delay to avoid rapid looping
+    client.destroy();
+    attemptCount = 0;
+    tryRestartBot();
+  } // 5-second delay before restart
+);
 
 // Uncaught exception handling
 process.on("uncaughtException", (error) => {
@@ -175,16 +186,16 @@ process.on("uncaughtException", (error) => {
   client.destroy();
 
   //Restart the bot after a delay to avoid rapid looping
-  setTimeout(() => {
-    console.log("Attempting to restart bot...");
-    startBot();
-  }, 5000); // 5-second delay before restart
+  console.log("Uncaught exception: Attempting to restart bot...");
+  attemptCount = 0;
+  tryRestartBot();
 });
 
 // Log in to Discord
 async function startBot() {
   try {
-    await client.login(process.env.discord_bot_id);
+    await client.login(process.env.discord_bot_id).then((attemptCount = 3));
+    console.log("startBot(): connected");
   } catch (error) {
     console.error("Failed to login:", error);
     // Retry after a delay
