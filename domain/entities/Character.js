@@ -88,7 +88,6 @@ class Character {
             throw new Error('Invalid JSON response or Not Found 404.');
         }
         await browser.close();
-        console.log('Data loaded successfully.');
     }
 }
 

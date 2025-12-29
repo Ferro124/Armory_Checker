@@ -2,7 +2,7 @@ const cheerio = require("cheerio");
 const request = require("request-promise");
 const { GetItems } = require('../infrastructure/ItemManager')
 const { GetParams } = require("../common/helpers/GenericHelper")
-const { RequestHTML } = require('../common/helpers/RequestHelper')
+const { RequestElementsFromHTML } = require('../common/helpers/RequestHelper')
 const { Character } = require('../domain/entities/Character')
 const { ItemTypeEnum, ItemTypeEnumToString } = require('../domain/enums/ItemTypeEnum')
 const { WarmaneItemTypeEnum } = require('../domain/enums/WarmaneItemTypeEnum')
@@ -18,10 +18,9 @@ async function GetCharacter(realm, name) {
             try {
                 await char.load(); // This opens a browser window
                 if (char.valid) {
-                    console.log('Character found:', char.name, char.level, char.guild);
                     await GetGearScore(char);
-                    //await GetEnchants(char);
-                    await GetEnchantsAndGems(char);
+                    await GetEnchants(char);
+                    await GetGems(char);
                     await GetTalents(char);
                     await GetSummary(char);
 
@@ -96,79 +95,101 @@ async function GetGearScore(character) {
     }
 }
 
-async function GetEnchantsAndGems(character) {
+async function GetGems(character) {
     if (!character || !character.name || !character.realm) {
         throw new Error('Invalid character object');
     }
 
     const url = `https://armory.warmane.com/character/${encodeURIComponent(character.name)}/${encodeURIComponent(character.realm)}/`;
-    const { html, browser } = await RequestHTML(character, url)
-    const $ = cheerio.load(html);
 
-    //Gems
-    let equippedItems = [];
-    let actualItems = [];
+    // Make sure this is the version that returns gearData via page.evaluate
+    const { htmlData, browser } = await RequestElementsFromHTML(character, url); // ← Use correct function name
+
+    const equippedItems = [];
+    const actualItems = [];
     let i = 0;
-    let missingGems = [];
+    const missingGems = [];
 
-    //Enchants
-    const bannedItems = [1, 5, 6, 9, 14, 15];
-    let missingEnchants = [];
+    htmlData.rels.forEach((rel) => {
+        if (rel && rel.trim()) {
+            const params = GetParams(rel);
 
-
-    $(".item-model a").each(function () {
-        let rel = $(this).attr("rel");
-
-        if (rel) {
-            const params = GetParams(rel); // Assuming this function exists elsewhere in your code
-
-            if (params["gems"]) {
-                const gemCount = params["gems"].split(":").filter(x => x != 0 && x !== "").length;
-                equippedItems.push(Number(params["item"]));
-
-                actualItems.push({
-                    itemID: Number(params["item"]),
-                    gems: gemCount,
-                    type: WarmaneItemTypeEnum[i] // Assuming this enum is defined
-                });
+            if (!params || !params.item) {
+                i++;
+                return;
             }
+
+            let gemCount = 0;
+            if (params.gems) {
+                gemCount = params.gems
+                    .split(":")
+                    .filter(x => x && x !== "0").length;
+            }
+
+            const itemID = Number(params.item);
+
+            equippedItems.push(itemID);
+            actualItems.push({
+                itemID,
+                gems: gemCount,
+                type: WarmaneItemTypeEnum[i]
+            });
         }
+        // ← Critical: Increment i for EVERY slot, even empty ones
         i++;
     });
 
-
-
-    // Now fetch item data from DB (your existing logic)
+    // Now fetch expected gem counts from your database
     return new Promise((resolve, reject) => {
         GetItems(equippedItems, async (err, itemsDB) => {
             if (err) {
-                console.log("Error fetching items from DB:", err);
+                console.error("Error fetching items from DB:", err);
                 await browser.close();
                 return reject(err);
             }
 
-            itemsDB.forEach(item => {
-                let foundItem = actualItems.find(x => x.itemID === item.itemID);
-                if (!foundItem) return;
+            itemsDB.forEach(dbItem => {
+                const equipped = actualItems.find(x => x.itemID === dbItem.itemID);
+                if (!equipped) return;
 
                 const hasBlacksmithing = character.professions?.some(p => p.name === "Blacksmithing") || false;
-                const isExtraSocketSlot = (foundItem.type === "Belt") ||
-                    (["Gloves", "Bracer"].includes(foundItem.type) && hasBlacksmithing);
 
-                const expectedGems = isExtraSocketSlot ? item.gems + 1 : item.gems;
+                const isExtraSocket = (equipped.type === "Belt") ||
+                    (["Gloves", "Bracer"].includes(equipped.type) && hasBlacksmithing);
 
-                if (expectedGems > foundItem.gems) {
-                    missingGems.push(foundItem.type);
+                const expectedGems = isExtraSocket ? dbItem.gems + 1 : dbItem.gems;
+
+                if (expectedGems > equipped.gems) {
+                    missingGems.push(equipped.type);
                 }
             });
 
-            if (missingGems.length === 0) {
-                character.Gems = `${character.name} has gemmed all his items! ✅`;
-            } else {
-                character.Gems = `${character.name} needs to gem ${missingGems.join(", ")} ❌`;
-            }
+            const message = missingGems.length === 0
+                ? `${character.name} has gemmed all items! ✅`
+                : `${character.name} needs to gem: ${missingGems.join(", ")} ❌`;
 
-            resolve(character.Gems);
+            character.Gems = message;
+
+            await browser.close();
+            resolve(message);
+        });
+    });
+}
+
+
+async function GetEnchants(character) {
+    const bannedItems = [1, 5, 6, 9, 14, 15];
+    let missingEnchants = [];
+
+    const options = {
+        uri: `http://armory.warmane.com/character/${character.name}/${character.realm}/`,
+        transform: function (body) {
+            return cheerio.load(body);
+        }
+    };
+
+    return new Promise((resolve) => {
+        request(options).then(($) => {
 
             let items = [];
             let characterClass = $(".level-race-class").text().toLowerCase();
@@ -209,9 +230,6 @@ async function GetEnchantsAndGems(character) {
             if (missingEnchants.length === 0) character.Enchants = `${character.name} has all enchants! :white_check_mark:`;
             else character.Enchants = `${character.name} is missing enchants from: ${missingEnchants.join(", ")} :x:`;
 
-            
-            await browser.close();
-            console.log('Browser closed. Gems check complete.');
             resolve(character.Enchants);
         });
     });

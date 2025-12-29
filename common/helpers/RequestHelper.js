@@ -1,11 +1,8 @@
 const puppeteer = require('puppeteer');
 const path = require('path');
 const fs = require('fs').promises;
-const cheerio = require('cheerio'); // Still used for parsing after page loads
 const COOKIES_FILE = path.resolve('warmane_armory_cookies.json');
-const { GetParams } = require('./GenericHelper')
-const { WarmaneItemTypeEnum } = require('../../domain/enums/WarmaneItemTypeEnum')
-const { GetItems } = require('../../infrastructure/ItemManager')
+
 
 async function CallBrowserConfigured() {
     const browser = await puppeteer.launch({
@@ -41,12 +38,11 @@ async function RequestJSON(url) {
         throw new Error('Invalid JSON response or Not Found 404.');
     }
     await browser.close();
-    console.log('Data loaded successfully.');
 
     return { body, browser };
 };
 
-async function RequestHTML(character, url) {
+async function RequestElementsFromHTML(character, url) {
     if (!character || !character.name || !character.realm) {
         throw new Error('Invalid character object');
     }
@@ -75,14 +71,35 @@ async function RequestHTML(character, url) {
     try {
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 120000 }); // 2 min timeout for manual solve
 
+
+        // *** CRITICAL FIX: Wait for the gear section to render ***
+        try {
+            await page.waitForSelector('.item-model a[rel]', { timeout: 30000 });
+        } catch (waitErr) {
+            console.warn('Timed out waiting for .item-model a[rel]. Trying fallback waits...');
+
+            // Fallback: wait for any item-model or known container
+            await page.waitForSelector('.item-model', { timeout: 20000 }).catch(() => { });
+            await page.waitForTimeout(5000); // Extra buffer for JS to finish
+        }
+
         // Save cookies after successful load (especially important if a new cf_clearance was issued)
         const currentCookies = await page.cookies();
         await fs.writeFile(COOKIES_FILE, JSON.stringify(currentCookies, null, 2));
-        console.log(`Saved ${currentCookies.length} cookies for future use.`);
 
         // Get page HTML and load into Cheerio for parsing
-        const html = await page.content();
-        return { html, browser };
+
+        const htmlData = await page.evaluate(() => {
+            const rels = [];
+            document.querySelectorAll('.item-model a[rel]').forEach(a => {
+                rels.push(a.getAttribute('rel'));
+            });
+
+            return { rels};
+        });
+
+
+        return { htmlData, browser };
 
     } catch (error) {
         await browser.close();
@@ -90,5 +107,5 @@ async function RequestHTML(character, url) {
     }
 }
 
-module.exports = { RequestJSON, RequestHTML }
+module.exports = { RequestJSON, RequestElementsFromHTML }
 
