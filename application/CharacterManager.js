@@ -11,24 +11,27 @@ const Achievements = require('../common/constants/Achievements');
 
 async function GetCharacter(realm, name) {
     return new Promise(async (resolve, reject) => {
-        let character = await new Character(GetCamelToe(realm), GetCamelToe(name));
+        (async () => {
+            const char = new Character(GetCamelToe(realm), GetCamelToe(name));
+            try {
+                await char.load(); // This opens a browser window
+                if (char.valid) {
+                    console.log('Character found:', char.name, char.level, char.guild);
+                    await GetGearScore(char);
+                    await GetEnchants(char);
+                    await GetGems(char);
+                    await GetTalents(char);
+                    await GetSummary(char);
 
-        character.request
-            .then(async _ => {
-                if (character.valid) {
-                    await GetGearScore(character);
-                    await GetEnchants(character);
-                    await GetGems(character);
-                    await GetTalents(character);
-                    await GetSummary(character);
-
-                    resolve(character);
+                    resolve(char);
+                } else {
+                    console.log('Character not found or invalid.');
+                    reject(`Unfortunately, Warmane's API didn't return any information about ${name} from realm ${realm}. Try again, please.`);
                 }
-                else reject(`Unfortunately, Warmane's API didn't return any information about ${name} from realm ${realm}. Try again, please.`);
-            })
-            .catch(err => {
-                console.log(err);
-            });
+            } catch (err) {
+                console.error('Error loading character:', err);
+            }
+        })();
     })
 }
 
@@ -224,7 +227,7 @@ async function GetTalents(character) {
     let res = "";
 
     if (character.talents != null) {
-        for (let i=0; i < character.talents.length; i++) {
+        for (let i = 0; i < character.talents.length; i++) {
             if (i === 1) res += " and ";
 
             res += character.talents[i].tree;
@@ -243,10 +246,10 @@ async function GetAchievements(character) {
 
     try {
         const options = new firefox.Options();
-        options.windowSize({ width: 400, height: 300 });
+        options.windowSize({ width: 1000, height: 700 });
         options.addArguments('-hideToolbar');
-        options.addArguments('--headless');
- 
+        // options.addArguments('--headless');
+
         driver = new Builder().forBrowser('firefox').setFirefoxOptions(options).build();
         await driver.get(`http://armory.warmane.com/character/${character.name}/${character.realm}/achievements`);
 
@@ -287,7 +290,7 @@ async function GetSummary(character) {
     const pvpGearPattern = listPattern + ":exclamation:";
 
     character.Summary =
-    `
+        `
     Here is a summary for **${character.name}**:
     **Status**: ${character.online ? "Online :green_circle:" : "Offline :red_circle:"}
     **Character**: ${"Level " + character.level + " " + character.race + " " + character.class + " - " + character.faction + " " + (character.faction === "Alliance" ? ":blue_heart:" : ":heart:")}
