@@ -91,11 +91,31 @@ async function RequestElementsFromHTML(character, url) {
 
         const htmlData = await page.evaluate(() => {
             const rels = [];
-            document.querySelectorAll('.item-model a[rel]').forEach(a => {
-                rels.push(a.getAttribute('rel'));
+            document.querySelectorAll('.item-slot').forEach(a => {
+                rels.push(a.querySelector('a').getAttribute('rel') || '');
             });
 
-            return { rels};
+            const classText = document.querySelector('.level-race-class')?.textContent || '';
+
+            const professions = []
+            const profElements = document.querySelectorAll('.profskills .text');
+            if (profElements.length > 0) {
+                profElements.forEach(el => {
+                    // Clone to avoid modifying the live DOM
+                    const clone = el.cloneNode(true);
+
+                    // Remove any <span> children (these contain skill levels like "450/450")
+                    clone.querySelectorAll('span').forEach(span => span.remove());
+
+                    const profName = clone.textContent.trim();
+
+                    if (profName) {
+                        professions.push(profName);
+                    }
+                });
+            }
+
+            return { rels, professions, classText };
         });
 
 
