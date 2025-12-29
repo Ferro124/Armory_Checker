@@ -1,4 +1,4 @@
-const puppeteer = require('puppeteer');
+const { RequestJSON } = require('../../common/helpers/RequestHelper')
 
 class Character {
     /**
@@ -52,60 +52,41 @@ class Character {
      */
     async load() {
         const url = `https://armory.warmane.com/api/character/${encodeURIComponent(this.charName)}/${encodeURIComponent(this.realm)}/summary`;
-
-        const browser = await puppeteer.launch({
-            headless: false, // Visible browser to allow manual Cloudflare bypass
-            defaultViewport: null,
-            args: ['--window-size=1200,800']
-        });
-
-        const page = await browser.newPage();
-
-        // Optional: set a realistic user agent
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-
-        console.log(`Navigating to: ${url}`);
-        console.log('If Cloudflare challenge appears, please solve it manually in the opened browser window.');
-
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-
-        // Extract the JSON from the page (it's displayed as plain text)
-        const jsonText = await page.evaluate(() => document.body.innerText);
-
-        let body;
+        
+        //Request JSOn from warmane API, can use this function always when needed
+        const { body, browser } = await RequestJSON(url);
         try {
-            body = JSON.parse(jsonText);
+
+            // Populate properties from API response
+            this.name = body.name || null;
+            this.realm = body.realm || this.realm;
+            this.online = body.online ?? null;
+            this.level = body.level || null;
+            this.faction = body.faction || null;
+            this.gender = body.gender || null;
+            this.class = body.class || null;
+            this.honorablekills = body.honorablekills || null;
+            this.guild = body.guild || null;
+            this.achievementpoints = body.achievementpoints || null;
+            this.equipment = body.equipment || null;
+            this.race = body.race || null;
+            this.talents = body.talents || null;
+            this.professions = body.professions || null;
+
+            if (body && body.name) {
+                this.valid = true;
+            }
+
+            // Calculated fields (you can extend these as needed)
+            this.GuildLink = this.guild
+                ? `[${this.guild}](http://armory.warmane.com/guild/${encodeURIComponent(this.guild.replace(/ /g, '+'))}/${this.realm})`
+                : null;
+
         } catch (err) {
             console.error('Failed to parse JSON. Page content might still be a Cloudflare challenge or error.');
             await browser.close();
-            throw new Error('Invalid JSON response');
+            throw new Error('Invalid JSON response or Not Found 404.');
         }
-
-        // Populate properties from API response
-        this.name = body.name || null;
-        this.realm = body.realm || this.realm;
-        this.online = body.online ?? null;
-        this.level = body.level || null;
-        this.faction = body.faction || null;
-        this.gender = body.gender || null;
-        this.class = body.class || null;
-        this.honorablekills = body.honorablekills || null;
-        this.guild = body.guild || null;
-        this.achievementpoints = body.achievementpoints || null;
-        this.equipment = body.equipment || null;
-        this.race = body.race || null;
-        this.talents = body.talents || null;
-        this.professions = body.professions || null;
-
-        if (body && body.name) {
-            this.valid = true;
-        }
-
-        // Calculated fields (you can extend these as needed)
-        this.GuildLink = this.guild
-            ? `[${this.guild}](http://armory.warmane.com/guild/${encodeURIComponent(this.guild.replace(/ /g, '+'))}/${this.realm})`
-            : null;
-
         await browser.close();
         console.log('Data loaded successfully.');
     }
