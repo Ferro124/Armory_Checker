@@ -1,20 +1,24 @@
 require("dotenv").config();
+const { Client, GatewayIntentBits } = require('discord.js');
 const express = require("express");
-const { Client, Intents } = require("discord.js");
 const crypto = require("crypto");
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent  // Needed if you want to read message content
+    ]
+});
+
 const CharacterManager = require("./application/CharacterManager");
 const CI = require("./common/constants/CommandInfo");
 const { RealmEnum } = require("./domain/enums/RealmEnum");
 const { GetCamelToe } = require("./common/helpers/GenericHelper");
 
-const client = new Client({
-  intents: [Intents.FLAGS.GUILDS, Intents.FLAGS.GUILD_MESSAGES],
-});
-
 const app = express();
 const port = 2001;
 
-client.on("ready", () => {
+client.once('clientReady', () => {
   console.log(
     `[${new Date().toLocaleString()}]:> Logged in as: ${client.user.tag}`
   );

@@ -1,5 +1,4 @@
 const cheerio = require("cheerio");
-const fetch = require('node-fetch');
 const { GetItems } = require('../infrastructure/ItemManager')
 const { GetParams } = require("../common/helpers/GenericHelper")
 const { RequestElementsFromHTML, RequestCheckAndSaveCookiesFromArchievementsPage } = require('../common/helpers/RequestHelper')
