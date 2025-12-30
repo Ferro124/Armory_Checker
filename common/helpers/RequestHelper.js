@@ -1,71 +1,91 @@
 const puppeteer = require('puppeteer');
 const path = require('path');
-const { buildAchievementsTable } = require('./AchievementsHelpers');
 const fs = require('fs').promises;
 const COOKIES_FILE = path.resolve('warmane_armory_cookies.json');
 
 
-async function CallBrowserConfigured() {
-    const browser = await puppeteer.launch({
-        headless: false, // MUST be visible so user can solve Cloudflare challenge
-        defaultViewport: null,
-        args: ['--window-size=1400,900', '--start-maximized']
-    });
-    return browser
-}
-
-async function RequestJSON(url) {
-    const browser = await CallBrowserConfigured();
+async function CallBrowserConfigured(mode) {
+    let CONFIGS = {};
+    if (mode == 'window') {
+        CONFIGS = {
+            headless: false, // MUST be visible so user can solve Cloudflare challenge
+            defaultViewport: null,
+            args: ['--window-size=1400,900', '--start-maximized']
+        }
+    } else {
+        CONFIGS = {
+            headless: true, // MUST be visible so user can solve Cloudflare challenge
+            defaultViewport: null
+        }
+    }
+    const browser = await puppeteer.launch(CONFIGS);
 
     const page = await browser.newPage();
-
-    // Optional: set a realistic user agent
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-    console.log(`Navigating to: ${url}`);
-    console.log('If Cloudflare challenge appears, please solve it manually in the opened browser window.');
+    return { browser, page }
+}
 
+
+async function RequestJSON(url) {
+    const { browser } = await CallBrowserConfigured('headless')
     // Load saved cookies if they exist (helps skip challenges if cf_clearance is still valid)
     try {
+        const { browser, page } = await CallBrowserConfigured('headless');
         const cookiesData = await fs.readFile(COOKIES_FILE, 'utf-8');
         const cookies = JSON.parse(cookiesData);
         await page.setCookie(...cookies);
         await browser.setCookie(...cookies);
         await page.goto(url)
         console.log(`Loaded ${cookies.length} saved cookies. May skip Cloudflare challenge.`);
+
+        return JSONParse(page, browser)
     } catch (err) {
+        const { page } = await CallBrowserConfigured('window')
         console.log('No saved cookies found. Starting fresh session.');
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 120000 }); // 2 min timeout for manual solve
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 }); // 2 min timeout for manual solve
 
         // Save cookies after successful load (especially important if a new cf_clearance was issued)
         const currentCookies = await page.cookies();
         await fs.writeFile(COOKIES_FILE, JSON.stringify(currentCookies, null, 2));
+        let body = await JSONParse(page, browser)
+        await browser.close();
+        return { body, browser };
+    } finally {
+          if (browser) {
+            await browser.close().catch(closeErr => {
+                console.error('Error closing browser:', closeErr.message);
+            });
+            console.log('Browser closed.');
+        }
     }
 
+};
+
+
+async function JSONParse(page, browser) {
     // Extract the JSON from the page (it's displayed as plain text)
     const jsonText = await page.evaluate(() => document.body.innerText);
 
     let body;
     try {
         body = JSON.parse(jsonText);
+        return { body, browser };
     } catch (err) {
         console.error('Failed to parse JSON. Page content might still be a Cloudflare challenge or error.');
         await browser.close();
         throw new Error('Invalid JSON response or Not Found 404.');
     }
-    await browser.close();
+}
 
-    return { body, browser };
-};
+
 
 async function RequestElementsFromHTML(character, url) {
     if (!character || !character.name || !character.realm) {
         throw new Error('Invalid character object');
     }
 
-    const browser = await CallBrowserConfigured();
-
-    const page = await browser.newPage();
+    const { browser, page } = await CallBrowserConfigured('headless');
 
     // Set realistic user agent
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
@@ -144,51 +164,8 @@ async function RequestElementsFromHTML(character, url) {
     }
 }
 
-async function RequestArchievementsFromHTML(character, url) {
-    const browser = await CallBrowserConfigured();
-    const page = await browser.newPage();
-
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-
-    // Carrega cookies salvos (útil para cf_clearance)
-    try {
-        const cookies = JSON.parse(await fs.readFile(COOKIES_FILE, 'utf-8'));
-        await page.setCookie(...cookies);
-        console.log('Cookies carregados para achievements');
-    } catch (err) {
-        console.log('Sem cookies salvos – sessão nova');
-    }
-
-    console.log(`Abrindo página de achievements: ${url}`);
-    console.log('Se aparecer Cloudflare, resolva manualmente na janela do navegador.');
-
-    try {
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 120000 });
-
-        // Salva cookies (caso tenha recebido novo cf_clearance)
-        await fs.writeFile(COOKIES_FILE, JSON.stringify(await page.cookies(), null, 2));
-
-        // Espera a estrutura de achievements carregar
-        await page.waitForSelector('.achievements .menu', { timeout: 30000 });
-
-        const achievementsTable = await buildAchievementsTable(page);
-
-        character.Achievements = achievementsTable;
-
-        console.log('Achievements carregados com sucesso.');
-    } catch (error) {
-        console.error('Erro ao carregar achievements:', error.message);
-        character.Achievements = 'Erro ao carregar achievements ❌';
-    } finally {
-        await browser.close();
-    }
-
-    return character;
-}
-
 async function RequestCheckAndSaveCookiesFromArchievementsPage(url) {
-    const browser = await CallBrowserConfigured();
-    const page = await browser.newPage();
+    const { browser, page } = await CallBrowserConfigured('headless');
 
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
@@ -200,6 +177,7 @@ async function RequestCheckAndSaveCookiesFromArchievementsPage(url) {
         return cookies
 
     } catch (e) {
+        const { page } = await CallBrowserConfigured('window')
         console.log('Nenhum cookie salvo – iniciando sessão nova');
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 120000 });
         await fs.writeFile(COOKIES_FILE, JSON.stringify(await page.cookies(), null, 2));
@@ -211,5 +189,5 @@ async function RequestCheckAndSaveCookiesFromArchievementsPage(url) {
 }
 
 
-module.exports = { RequestJSON, RequestElementsFromHTML, RequestArchievementsFromHTML, RequestCheckAndSaveCookiesFromArchievementsPage }
+module.exports = { RequestJSON, RequestElementsFromHTML, RequestCheckAndSaveCookiesFromArchievementsPage }
 
