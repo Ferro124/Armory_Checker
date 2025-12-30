@@ -1,15 +1,11 @@
-const cheerio = require("cheerio");
-const request = require("request-promise");
 const { GetItems } = require('../infrastructure/ItemManager')
 const { GetParams } = require("../common/helpers/GenericHelper")
-const { RequestElementsFromHTML } = require('../common/helpers/RequestHelper')
+const { RequestElementsFromHTML, RequestArchievementsFromHTML } = require('../common/helpers/RequestHelper')
 const { Character } = require('../domain/entities/Character')
 const { ItemTypeEnum, ItemTypeEnumToString } = require('../domain/enums/ItemTypeEnum')
 const { WarmaneItemTypeEnum } = require('../domain/enums/WarmaneItemTypeEnum')
 const { GetCamelToe } = require('../common/helpers/GenericHelper')
-const { Builder, By, until } = require('selenium-webdriver');
-const firefox = require('selenium-webdriver/firefox');
-const Achievements = require('../common/constants/Achievements');
+
 
 async function GetCharacter(realm, name) {
     return new Promise(async (resolve, reject) => {
@@ -19,8 +15,6 @@ async function GetCharacter(realm, name) {
                 await char.load(); // This opens a browser window
                 if (char.valid) {
                     await GetGearScore(char);
-                    //await GetEnchants(char);
-                    //await GetGems(char);
                     await AnalyzeGear(char);
                     await GetTalents(char);
                     await GetSummary(char);
@@ -96,147 +90,8 @@ async function GetGearScore(character) {
     }
 }
 
-/* async function GetGems(character) {
-    if (!character || !character.name || !character.realm) {
-        throw new Error('Invalid character object');
-    }
-
-    const url = `https://armory.warmane.com/character/${encodeURIComponent(character.name)}/${encodeURIComponent(character.realm)}/`;
-
-    // Make sure this is the version that returns gearData via page.evaluate
-    const { htmlData, browser } = await RequestElementsFromHTML(character, url); // ← Use correct function name
-
-    const equippedItems = [];
-    const actualItems = [];
-    let i = 0;
-    const missingGems = [];
-
-    htmlData.rels.forEach((rel) => {
-        if (rel && rel.trim()) {
-            const params = GetParams(rel);
-
-            if (!params || !params.item) {
-                i++;
-                return;
-            }
-
-            let gemCount = 0;
-            if (params.gems) {
-                gemCount = params.gems
-                    .split(":")
-                    .filter(x => x && x !== "0").length;
-            }
-
-            const itemID = Number(params.item);
-
-            equippedItems.push(itemID);
-            actualItems.push({
-                itemID,
-                gems: gemCount,
-                type: WarmaneItemTypeEnum[i]
-            });
-        }
-        // ← Critical: Increment i for EVERY slot, even empty ones
-        i++;
-    });
-
-    // Now fetch expected gem counts from your database
-    return new Promise((resolve, reject) => {
-        GetItems(equippedItems, async (err, itemsDB) => {
-            if (err) {
-                console.error("Error fetching items from DB:", err);
-                await browser.close();
-                return reject(err);
-            }
-
-            itemsDB.forEach(dbItem => {
-                const equipped = actualItems.find(x => x.itemID === dbItem.itemID);
-                if (!equipped) return;
-
-                const hasBlacksmithing = character.professions?.some(p => p.name === "Blacksmithing") || false;
-
-                const isExtraSocket = (equipped.type === "Belt") ||
-                    (["Gloves", "Bracer"].includes(equipped.type) && hasBlacksmithing);
-
-                const expectedGems = isExtraSocket ? dbItem.gems + 1 : dbItem.gems;
-
-                if (expectedGems > equipped.gems) {
-                    missingGems.push(equipped.type);
-                }
-            });
-
-            const message = missingGems.length === 0
-                ? `${character.name} has gemmed all items! ✅`
-                : `${character.name} needs to gem: ${missingGems.join(", ")} ❌`;
-
-            character.Gems = message;
-
-            await browser.close();
-            resolve(message);
-        });
-    });
-}
-
-
-async function GetEnchants(character) {
-    const bannedItems = [1, 5, 6, 9, 14, 15];
-    let missingEnchants = [];
-
-    const options = {
-        uri: `http://armory.warmane.com/character/${character.name}/${character.realm}/`,
-        transform: function (body) {
-            return cheerio.load(body);
-        }
-    };
-
-    return new Promise((resolve) => {
-        request(options).then(($) => {
-
-            let items = [];
-            let characterClass = $(".level-race-class").text().toLowerCase();
-            let professions = [];
-            $(".profskills").find(".text").each(function () {
-                professions.push($(this).clone().children().remove().end().text().trim());
-            });
-            $(".item-model a").each(function () {
-                $(this).attr("href");
-                let rel = $(this).attr("rel");
-                items.push(rel);
-            });
-
-            for (let i = 0; i < items.length; i++) {
-                if (items[i]) {
-                    if (!bannedItems.includes(i)) {
-                        if (items[i].indexOf("ench") === -1) {
-                            if (WarmaneItemTypeEnum[i] === "Ranged") {
-                                if (characterClass.indexOf("hunter") >= 0) {
-                                    missingEnchants.push(WarmaneItemTypeEnum[i]);
-                                }
-                            } else if (WarmaneItemTypeEnum[i] === "Ring #1" || WarmaneItemTypeEnum[i] === "Ring #2") {
-                                if (professions.includes("Enchanting")) {
-                                    missingEnchants.push(WarmaneItemTypeEnum[i]);
-                                }
-                            } else if (WarmaneItemTypeEnum[i] === "Off-hand") {
-                                if (characterClass.indexOf("mage") < 0 && characterClass.indexOf("warlock") < 0 && characterClass.indexOf("druid") < 0 && characterClass.indexOf("priest") < 0) {
-                                    missingEnchants.push(WarmaneItemTypeEnum[i]);
-                                }
-                            } else {
-                                missingEnchants.push(WarmaneItemTypeEnum[i]);
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (missingEnchants.length === 0) character.Enchants = `${character.name} has all enchants! :white_check_mark:`;
-            else character.Enchants = `${character.name} is missing enchants from: ${missingEnchants.join(", ")} :x:`;
-
-            resolve(character.Enchants);
-        });
-    });
-} */
-
 async function AnalyzeGear(character) {
+
     if (!character || !character.name || !character.realm) {
         throw new Error('Invalid character object');
     }
@@ -306,10 +161,7 @@ async function AnalyzeGear(character) {
 
                     if (!hasAnyEnchant) {
                         const slotType = WarmaneItemTypeEnum[i];
-                        if (["Bracer", "Legs", "Boots", "Cloak", "Gloves"].includes(slotType)) {
-                            console.log(`Slot ${i} (${slotType}): rel="${rel}" params=`, params);
-                            console.log(`Detected enchant: standard=${hasStandardEnchant}, legPatch=${hasLegPatch}`);
-                        }
+
                         // Your existing special rules (hunter ranged, enchanting rings, etc.)
                         let shouldFlag = true;
 
@@ -408,48 +260,14 @@ async function GetTalents(character) {
 }
 
 async function GetAchievements(character) {
-    let driver;
-
-    try {
-        const options = new firefox.Options();
-        options.windowSize({ width: 1000, height: 700 });
-        options.addArguments('-hideToolbar');
-        // options.addArguments('--headless');
-
-        driver = new Builder().forBrowser('firefox').setFirefoxOptions(options).build();
-        await driver.get(`http://armory.warmane.com/character/${character.name}/${character.realm}/achievements`);
-
-        character.Achievements = `\`\`\`fix
-Raid   | 25HC 25NM 10HC 10NM
-----------------------------
-ICC    |  ${await GetSingleAchievement(driver, Achievements.Raids.ICC25HC)}  ${await GetSingleAchievement(driver, Achievements.Raids.ICC25)}   ${await GetSingleAchievement(driver, Achievements.Raids.ICC10HC)}  ${await GetSingleAchievement(driver, Achievements.Raids.ICC10)}
-RS     |  ${await GetSingleAchievement(driver, Achievements.Raids.RS25HC)}  ${await GetSingleAchievement(driver, Achievements.Raids.RS25)}   ${await GetSingleAchievement(driver, Achievements.Raids.RS10HC)}  ${await GetSingleAchievement(driver, Achievements.Raids.RS10)}
-TOC    |  ${await GetSingleAchievement(driver, Achievements.Raids.TOC25HC)}  ${await GetSingleAchievement(driver, Achievements.Raids.TOC25)}   ${await GetSingleAchievement(driver, Achievements.Raids.TOC10HC)}  ⬛  \`\`\``;
-    } finally {
-        if (driver) {
-            try {
-                await driver.quit();
-            } catch (err) {
-                console.log(err);
-            }
-        }
+    if (!character || !character.name || !character.realm) {
+        throw new Error('Invalid character object');
     }
+    const url = `https://armory.warmane.com/character/${encodeURIComponent(character.name)}/${encodeURIComponent(character.realm)}/achievements`;
+    return RequestArchievementsFromHTML(character, url);
 }
 
-async function GetSingleAchievement(driver, raid) {
-    await driver.wait(until.elementLocated(By.xpath(`//a[contains(text(), '${raid.path1}')]`)), 10000).click();
-    await driver.wait(until.elementLocated(By.xpath(`//a[contains(text(), '${raid.path2}')]`)), 10000).click();
 
-    try {
-        await driver.manage().setTimeouts({ implicit: 700 });
-        let achievementDiv = await driver.findElement(By.id(raid.id));
-        let date = await achievementDiv.findElements(By.className('date'));
-
-        return date && date.length > 0 ? "✅" : "❌";
-    } catch {
-        return "❌";
-    }
-}
 
 async function GetSummary(character) {
     const listPattern = "\n\t\t";

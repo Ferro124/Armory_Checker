@@ -77,6 +77,7 @@ client.on("messageCreate", async (msg) => {
                 hAchievCmd(msg);
                 break;
               case CI.Commands.achievements:
+                hAchievCmd(msg)
                 break;
               case CI.Commands.achi:
                 await CharacterManager.GetAchievements(character).then(
