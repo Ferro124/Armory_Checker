@@ -25,7 +25,22 @@ async function RequestJSON(url) {
     console.log(`Navigating to: ${url}`);
     console.log('If Cloudflare challenge appears, please solve it manually in the opened browser window.');
 
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+    // Load saved cookies if they exist (helps skip challenges if cf_clearance is still valid)
+    try {
+        const cookiesData = await fs.readFile(COOKIES_FILE, 'utf-8');
+        const cookies = JSON.parse(cookiesData);
+        await page.setCookie(...cookies);
+        await browser.setCookie(...cookies);
+        await page.goto(url)
+        console.log(`Loaded ${cookies.length} saved cookies. May skip Cloudflare challenge.`);
+    } catch (err) {
+        console.log('No saved cookies found. Starting fresh session.');
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 120000 }); // 2 min timeout for manual solve
+
+        // Save cookies after successful load (especially important if a new cf_clearance was issued)
+        const currentCookies = await page.cookies();
+        await fs.writeFile(COOKIES_FILE, JSON.stringify(currentCookies, null, 2));
+    }
 
     // Extract the JSON from the page (it's displayed as plain text)
     const jsonText = await page.evaluate(() => document.body.innerText);
@@ -63,7 +78,7 @@ async function RequestElementsFromHTML(character, url) {
         console.log(`Loaded ${cookies.length} saved cookies. May skip Cloudflare challenge.`);
     } catch (err) {
         console.log('No saved cookies found. Starting fresh session.');
-         await page.goto(url, { waitUntil: 'networkidle2', timeout: 120000 }); // 2 min timeout for manual solve
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 120000 }); // 2 min timeout for manual solve
 
         // Save cookies after successful load (especially important if a new cf_clearance was issued)
         const currentCookies = await page.cookies();
@@ -77,7 +92,7 @@ async function RequestElementsFromHTML(character, url) {
     try {
         const cookies = JSON.parse(await fs.readFile(COOKIES_FILE, 'utf-8'))
         browser.setCookie(...cookies);
-        await page.goto(url)       
+        await page.goto(url)
         // *** CRITICAL FIX: Wait for the gear section to render ***
         try {
             await page.waitForSelector('.item-model a[rel]', { timeout: 30000 });
