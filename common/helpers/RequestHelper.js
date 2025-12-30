@@ -1,83 +1,124 @@
 const puppeteer = require('puppeteer');
 const path = require('path');
 const fs = require('fs').promises;
-const COOKIES_FILE = path.resolve('warmane_armory_cookies.json');
 
+const COOKIES_FILE = path.resolve('warmane_armory_cookies.json');
+const MAX_COOKIE_AGE_HOURS = 4; // Refresh every 4 hours
 
 async function CallBrowserConfigured(mode) {
-    let CONFIGS = {};
-    if (mode == 'window') {
-        CONFIGS = {
-            headless: false, // MUST be visible so user can solve Cloudflare challenge
-            defaultViewport: null,
-            args: ['--window-size=1400,900', '--start-maximized']
-        }
-    } else {
-        CONFIGS = {
-            headless: true, // MUST be visible so user can solve Cloudflare challenge
-            defaultViewport: null
-        }
-    }
-    const browser = await puppeteer.launch(CONFIGS);
+    const isHeadless = mode === 'headless';
+
+    const browser = await puppeteer.launch({
+        headless: isHeadless ? true : false,
+        defaultViewport: null,
+        args: isHeadless 
+            ? ['--no-sandbox', '--disable-setuid-sandbox'] 
+            : ['--window-size=1400,900', '--start-maximized']
+    });
 
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-    return { browser, page }
+    return { browser, page };
 }
-
 
 async function RequestJSON(url) {
-    const { browser } = await CallBrowserConfigured('headless')
-    // Load saved cookies if they exist (helps skip challenges if cf_clearance is still valid)
+    let browser = null;
+    let page = null;
+
     try {
-        const { browser, page } = await CallBrowserConfigured('headless');
-        const cookiesData = await fs.readFile(COOKIES_FILE, 'utf-8');
-        const cookies = JSON.parse(cookiesData);
-        await page.setCookie(...cookies);
-        await browser.setCookie(...cookies);
-        await page.goto(url)
-        console.log(`Loaded ${cookies.length} saved cookies. May skip Cloudflare challenge.`);
+        let useSavedCookies = false;
 
-        return JSONParse(page, browser)
-    } catch (err) {
-        const { page } = await CallBrowserConfigured('window')
-        console.log('No saved cookies found. Starting fresh session.');
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 }); // 2 min timeout for manual solve
+        // Check if cookies exist and are fresh
+        try {
+            const stats = await fs.stat(COOKIES_FILE);
+            const ageInHours = (Date.now() - stats.mtime.getTime()) / (1000 * 60 * 60);
 
-        // Save cookies after successful load (especially important if a new cf_clearance was issued)
-        const currentCookies = await page.cookies();
-        await fs.writeFile(COOKIES_FILE, JSON.stringify(currentCookies, null, 2));
-        let body = await JSONParse(page, browser)
-        await browser.close();
-        return { body, browser };
-    } finally {
-          if (browser) {
-            await browser.close().catch(closeErr => {
-                console.error('Error closing browser:', closeErr.message);
-            });
-            console.log('Browser closed.');
+            if (ageInHours < MAX_COOKIE_AGE_HOURS) {
+                useSavedCookies = true;
+                console.log(`Cookies are ${ageInHours.toFixed(1)} hours old – trying to reuse.`);
+            } else {
+                console.log(`Cookies expired (${ageInHours.toFixed(1)}h old) – forcing refresh.`);
+                await fs.unlink(COOKIES_FILE);
+                console.log('Old cookies deleted.');
+            }
+        } catch (e) {
+            if (e.code === 'ENOENT') {
+                console.log('No saved cookies found – starting fresh session.');
+            } else {
+                console.warn('Error checking cookies file:', e.message);
+            }
         }
-    }
 
-};
+        // Launch browser: headless if cookies are fresh, visible otherwise
+        const mode = useSavedCookies ? 'headless' : 'window';
+        console.log(`Launching browser in ${mode} mode...`);
+        ({ browser, page } = await CallBrowserConfigured(mode));
+        
+        // Load saved cookies if available
+        if (useSavedCookies) {
+            try {
+                const cookiesData = await fs.readFile(COOKIES_FILE, 'utf-8');
+                const cookies = JSON.parse(cookiesData);
+                await page.setCookie(...cookies);
+                console.log(`Loaded ${cookies.length} saved cookies.`);
+            } catch (err) {
+                console.warn('Failed to load/parse cookies – treating as expired.');
+            }
+        }
 
+        // Navigate to the page
+        console.log(`Navigating to: ${url}`);
+        await page.goto(url, {
+            waitUntil: 'networkidle2',
+            timeout: useSavedCookies ? 30000 : 120000
+        });
 
-async function JSONParse(page, browser) {
-    // Extract the JSON from the page (it's displayed as plain text)
-    const jsonText = await page.evaluate(() => document.body.innerText);
+        // Always save fresh cookies after successful navigation
+        const allCookies = await page.cookies();
+        const warmaneCookies = allCookies.filter(cookie =>
+            cookie.domain.includes('warmane.com') || cookie.domain.includes('.warmane.com')
+        );
 
-    let body;
-    try {
-        body = JSON.parse(jsonText);
-        return { body, browser };
+        if (warmaneCookies.length > 0) {
+            await fs.writeFile(COOKIES_FILE, JSON.stringify(warmaneCookies, null, 2));
+            console.log(`Saved ${warmaneCookies.length} fresh cookies.`);
+        } else {
+            console.log('No relevant cookies found to save.');
+        }
+
+        // Parse JSON from page body
+        const jsonText = await page.evaluate(() => document.body.innerText.trim());
+
+        let body;
+        try {
+            body = JSON.parse(jsonText);
+        } catch (parseErr) {
+            console.error('Failed to parse JSON from page:', parseErr.message);
+            console.log('Raw response:', jsonText.substring(0, 500) + '...');
+            throw new Error('Invalid JSON response – likely blocked or character not found.');
+        }
+
+        console.log('Successfully retrieved and parsed character data.');
+        return { body , browser };
+
     } catch (err) {
-        console.error('Failed to parse JSON. Page content might still be a Cloudflare challenge or error.');
-        await browser.close();
-        throw new Error('Invalid JSON response or Not Found 404.');
+        console.error('Error in RequestJSON:', err.message);
+        throw err;
+    } finally {
+        // Always close the browser, even on error
+        if (browser) {
+            try {
+                await browser.close();
+                console.log('Browser closed successfully.');
+            } catch (closeErr) {
+                console.error('Error closing browser:', closeErr.message);
+            }
+        }
     }
 }
 
+module.exports = { RequestJSON };
 
 
 async function RequestElementsFromHTML(character, url) {
