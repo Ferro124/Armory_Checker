@@ -1,18 +1,3 @@
-const argsHandler = (msgContent) => {
-  const args = msgContent.split(" ");
-
-  if (args.length == 1) {
-    msg.reply("Please provide a character name");
-    return;
-  }
-
-  const realm = args[2] ? args[2] : "icecrown";
-
-  return { args, realm };
-};
-
-const baseURL = "https://armory.warmane.com";
-
 // class emoji
 const cE = {
   "Death Knight": "<:deathknight:1240756073703542894>",
@@ -27,4 +12,4 @@ const cE = {
   Warrior: "<:warrior:1240756092514861187>",
 };
 
-module.exports = { argsHandler, baseURL, cE };
+module.exports = { cE };

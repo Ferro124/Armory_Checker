@@ -1,11 +1,14 @@
+const cheerio = require("cheerio");
+const fetch = require('node-fetch');
 const { GetItems } = require('../infrastructure/ItemManager')
 const { GetParams } = require("../common/helpers/GenericHelper")
-const { RequestElementsFromHTML, RequestArchievementsFromHTML } = require('../common/helpers/RequestHelper')
+const { RequestElementsFromHTML, RequestCheckAndSaveCookiesFromArchievementsPage } = require('../common/helpers/RequestHelper')
 const { Character } = require('../domain/entities/Character')
 const { ItemTypeEnum, ItemTypeEnumToString } = require('../domain/enums/ItemTypeEnum')
 const { WarmaneItemTypeEnum } = require('../domain/enums/WarmaneItemTypeEnum')
 const { GetCamelToe } = require('../common/helpers/GenericHelper')
-
+const { baseURL } = require('../common/constants/Links')
+const { RAIDS } = require('../common/constants/Achievements')
 
 async function GetCharacter(realm, name) {
     return new Promise(async (resolve, reject) => {
@@ -17,6 +20,7 @@ async function GetCharacter(realm, name) {
                     await GetGearScore(char);
                     await AnalyzeGear(char);
                     await GetTalents(char);
+                    await GetAchievements(char)
                     await GetSummary(char);
 
                     resolve(char);
@@ -260,11 +264,59 @@ async function GetTalents(character) {
 }
 
 async function GetAchievements(character) {
-    if (!character || !character.name || !character.realm) {
-        throw new Error('Invalid character object');
+
+    const b = Array.from({ length: 8 }, () => ["❌", "❌"]);
+    let error = false, notFound = false;
+    const URL = `${baseURL}/character/${character.name}/${character.realm}/achievements`
+    const COOKIES = RequestCheckAndSaveCookiesFromArchievementsPage(URL);
+
+    for (let i = 0; i < RAIDS.length; i++) {
+        if (error || notFound) break;
+
+        try {
+            const res = await fetch(URL, {
+                method: "POST",
+                headers: {
+                    "content-type": "application/x-www-form-urlencoded",
+                    "cookie": COOKIES, // Key: send the cookies here
+                    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", // Match your browser's UA
+                    "accept": "application/json",
+                    "origin": baseURL,
+                    "referer": URL
+                },
+                body: `category=${RAIDS[i][0]}`
+            });
+
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+            const json = await res.json();
+
+            const $ = cheerio.load(json.content);
+            for (let j = 0; j < 2; j++) {
+                if ($(`#ach${RAIDS[i][1][j]} > .date`).length) b[i][j] = "✅";
+            }
+        } catch (err) {
+            RequestCheckAndSaveCookiesFromArchievementsPage(URL);
+            if (err.message.includes("Unexpected token") || err.message.includes("JSON")) notFound = true;
+            else {
+                console.error(err);
+                error = true;
+            }
+        }
     }
-    const url = `https://armory.warmane.com/character/${encodeURIComponent(character.name)}/${encodeURIComponent(character.realm)}/achievements`;
-    return RequestArchievementsFromHTML(character, url);
+
+    if (error) return "An error occurred finding achievements. Please try again later.";
+    if (notFound) return "The character you are looking for does not exist or does not meet the minimum required level.";
+
+    let table = `Raid   | 10NM 25NM 10HC 25HC
+${"-".repeat(28)}
+ICC    |  ${b[6][0]}   ${b[7][0]}   ${b[6][1]}   ${b[7][1]}
+RS     |  ${b[0][0]}   ${b[1][0]}   ${b[0][1]}   ${b[1][1]}
+TOC    |  ${b[4][0]}   ${b[5][0]}   ${b[4][1]}   ${b[5][1]}
+ULDUAR |  ${b[2][0]}   ${b[3][0]}   ${b[2][1]}   ${b[3][1]}`;
+    // msg.channel.send(`**${character.name}**'s Achievements:` + "```fix\n" + table + "```");
+    character.achievements = `**${character.name}**'s Achievements:\n\`\`\`fix\n${table}\n\`\`\``;
+    return character;
 }
 
 
@@ -288,6 +340,7 @@ async function GetSummary(character) {
     **Gems**: ${character.Gems}
     **Armory**: ${character.Armory}
     **PVP items**: ${character.PVPGear.length === 0 ? "None" : pvpGearPattern + character.PVPGear.join(pvpGearPattern)}
+    ${await character.achievements}
     `
 }
 

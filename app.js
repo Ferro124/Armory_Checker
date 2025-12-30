@@ -1,15 +1,15 @@
 require("dotenv").config();
+const express = require("express");
 const { Client, Intents } = require("discord.js");
-const client = new Client({
-  intents: [Intents.FLAGS.GUILDS, Intents.FLAGS.GUILD_MESSAGES],
-});
 const crypto = require("crypto");
 const CharacterManager = require("./application/CharacterManager");
 const CI = require("./common/constants/CommandInfo");
 const { RealmEnum } = require("./domain/enums/RealmEnum");
 const { GetCamelToe } = require("./common/helpers/GenericHelper");
-const express = require("express");
-const hAchievCmd = require("./cmd/achievements");
+
+const client = new Client({
+  intents: [Intents.FLAGS.GUILDS, Intents.FLAGS.GUILD_MESSAGES],
+});
 
 const app = express();
 const port = 2001;
@@ -70,14 +70,11 @@ client.on("messageCreate", async (msg) => {
                 break;
               case CI.Commands.summary:
                 msg.reply(character.Summary);
-                hAchievCmd(msg);
                 break;
               case CI.Commands.s:
                 msg.reply(character.Summary);
-                hAchievCmd(msg);
                 break;
               case CI.Commands.achievements:
-                hAchievCmd(msg)
                 break;
               case CI.Commands.achi:
                 await CharacterManager.GetAchievements(character).then(
